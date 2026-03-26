@@ -8,6 +8,7 @@ import plotly.express as px
 import streamlit as st
 
 DB_PATH = Path(__file__).with_name("banca.db")
+VTEST_LABEL = "Vtest"
 
 
 # ---------- Database ----------
@@ -185,7 +186,7 @@ def _extract_operations_from_payload(payload: Any, default_source: str = "iqopti
     return list(unique.values())
 
 
-def fetch_iqoption_operations(email: str, password: str, limit: int = 100) -> list[dict[str, Any]]:
+def fetch_iqoption_operations(email: str, password: str, limit: int = 100, balance_mode: str = "REAL") -> list[dict[str, Any]]:
     try:
         from iqoptionapi.stable_api import IQ_Option
     except Exception as exc:  # pragma: no cover
@@ -195,6 +196,7 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100) -> li
     connected, reason = api.connect()
     if not connected:
         raise RuntimeError(f"Falha ao conectar na IQ Option: {reason}")
+    api.change_balance(balance_mode)  # "REAL" ou "PRACTICE"
 
     payloads: list[Any] = []
 
@@ -212,9 +214,13 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100) -> li
         if callable(method):
             try:
                 result = method(*args)
+                print("METODO:", method_name)
+                print("TIPO:", type(result))
+                print("RESULTADO:", result)
                 if result:
                     payloads.append(result)
-            except Exception:
+            except Exception as e:
+                print("ERRO NO MÉTODO", method_name, e)
                 continue
 
     if hasattr(api, "close_connect"):
@@ -222,7 +228,9 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100) -> li
 
     operations: list[dict[str, Any]] = []
     for payload in payloads:
-        operations.extend(_extract_operations_from_payload(payload))
+        extracted = _extract_operations_from_payload(payload)
+        print("EXTRAIDAS:", len(extracted))
+        operations.extend(extracted)
 
     unique_by_key = {(op["source"], op["external_id"]): op for op in operations}
     return list(unique_by_key.values())
@@ -379,7 +387,7 @@ def main() -> None:
     init_db()
 
     st.title("💰 Controle de Banca - Ganhos e Perdas")
-    st.caption("Sistema local para gerenciamento diário da sua banca.")
+    st.caption(f"Sistema local para gerenciamento diário da sua banca. Modo atual: {VTEST_LABEL}.")
 
     settings = load_settings()
     operations = load_operations()
@@ -462,14 +470,17 @@ def main() -> None:
         st.subheader("🔌 IQ Option")
         iq_email = st.text_input("Email IQ Option", key="iq_email")
         iq_password = st.text_input("Senha IQ Option", type="password", key="iq_password")
-        iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=100, step=10)
+        iq_balance_mode = st.selectbox("Conta para sincronização", options=["REAL", "PRACTICE"], index=0)
+        iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=500, step=10)
         if st.button("Sincronizar operações da IQ Option", use_container_width=True):
             if not iq_email or not iq_password:
                 st.error("Preencha email e senha da IQ Option para sincronizar.")
             else:
                 with st.spinner("Sincronizando operações da IQ Option..."):
                     try:
-                        iq_ops = fetch_iqoption_operations(iq_email, iq_password, limit=int(iq_limit))
+                        iq_ops = fetch_iqoption_operations(iq_email, iq_password, limit=int(iq_limit), balance_mode=iq_balance_mode)
+                        st.write("Total retornado pela API:", len(iq_ops))
+                        st.write(iq_ops[:5] if iq_ops else "Nenhuma operação extraída")
                         inserted = 0
                         for op in iq_ops:
                             did_insert = add_operation(

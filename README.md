@@ -2,6 +2,8 @@
 
 Sistema web local para controle de banca, com registro de ganhos/perdas diárias, histórico de operações e gráfico de evolução.
 
+> Esta versão está identificada como **Vtest**.
+
 ## Funcionalidades
 
 - Informar banca inicial
@@ -78,8 +80,9 @@ Todos os dados ficam salvos localmente no arquivo `banca.db`, criado automaticam
 ## Sincronização com IQ Option
 
 1. Na barra lateral, preencha **Email IQ Option**, **Senha IQ Option** e o limite de operações para busca.
-2. Clique em **Sincronizar operações da IQ Option**.
-3. O sistema importa operações fechadas disponíveis e adiciona no histórico com origem `iqoption`.
-4. Operações já importadas não são duplicadas (controle por `source + external_id`).
+2. Escolha o tipo de conta em **Conta para sincronização** (`REAL` ou `PRACTICE`).
+3. Clique em **Sincronizar operações da IQ Option**.
+4. O sistema importa operações fechadas disponíveis e adiciona no histórico com origem `iqoption`.
+5. Operações já importadas não são duplicadas (controle por `source + external_id`).
 
 > Observação: esta integração usa a API não oficial do projeto no GitHub informado e depende dos métodos disponibilizados pela biblioteca instalada.
