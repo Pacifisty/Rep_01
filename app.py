@@ -334,6 +334,29 @@ def render_percentage_panel(title: str, pct_value: float, result_value: float, h
     )
 
 
+def render_iq_status_badge(is_online: bool) -> None:
+    color = "#22c55e" if is_online else "#ef4444"
+    text = "online" if is_online else "offline"
+    icon = "🟢" if is_online else "🔴"
+    st.markdown(
+        f"""
+        <div style="
+            display: inline-block;
+            margin: 6px 0 14px 0;
+            padding: 6px 12px;
+            border-radius: 999px;
+            border: 1px solid {color};
+            color: {color};
+            font-weight: 700;
+            background: rgba(15, 23, 42, 0.35);
+        ">
+            {icon} IQ Option: {text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def build_detailed_chart(operations: pd.DataFrame, initial_bankroll: float, group_by: str):
     df = operations.copy()
     df["event_dt"] = pd.to_datetime(df["op_datetime"], errors="coerce")
@@ -386,15 +409,19 @@ def main() -> None:
     st.set_page_config(page_title="Controle de Banca", page_icon="💰", layout="wide")
     init_db()
 
-    st.title("💰 Controle de Banca - Ganhos e Perdas")
-    st.caption(f"Sistema local para gerenciamento diário da sua banca. Modo atual: {VTEST_LABEL}.")
-
-    settings = load_settings()
-    operations = load_operations()
     if "hide_values" not in st.session_state:
         st.session_state.hide_values = False
     if "iq_account_history" not in st.session_state:
         st.session_state.iq_account_history = []
+    if "iq_connected" not in st.session_state:
+        st.session_state.iq_connected = False
+
+    st.title("💰 Controle de Banca - Ganhos e Perdas")
+    st.caption(f"Sistema local para gerenciamento diário da sua banca. Modo atual: {VTEST_LABEL}.")
+    render_iq_status_badge(bool(st.session_state.iq_connected))
+
+    settings = load_settings()
+    operations = load_operations()
 
     total_gain = float(operations.loc[operations["amount"] > 0, "amount"].sum()) if not operations.empty else 0.0
     total_loss = float(abs(operations.loc[operations["amount"] < 0, "amount"].sum())) if not operations.empty else 0.0
@@ -476,11 +503,13 @@ def main() -> None:
         iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=500, step=10)
         if st.button("Sincronizar operações da IQ Option", use_container_width=True):
             if not iq_email or not iq_password:
+                st.session_state.iq_connected = False
                 st.error("Preencha email e senha da IQ Option para sincronizar.")
             else:
                 with st.spinner("Sincronizando operações da IQ Option..."):
                     try:
                         iq_ops = fetch_iqoption_operations(iq_email, iq_password, limit=int(iq_limit), balance_mode=iq_balance_mode)
+                        st.session_state.iq_connected = True
                         st.session_state.iq_account_history = iq_ops
                         st.write("Total retornado pela API:", len(iq_ops))
                         st.write(iq_ops[:5] if iq_ops else "Nenhuma operação extraída")
@@ -499,6 +528,7 @@ def main() -> None:
                         st.success(f"Sincronização concluída. {inserted} novas operações importadas.")
                         st.rerun()
                     except Exception as exc:
+                        st.session_state.iq_connected = False
                         st.error(f"Erro na sincronização com IQ Option: {exc}")
 
     hide_values = bool(st.session_state.hide_values)
