@@ -34,6 +34,7 @@ Sistema web local para controle de banca, com registro de ganhos/perdas diárias
 - Campo de data e descrição da operação
 - Gráfico simples de evolução da banca
 - Integração com API não oficial da IQ Option para importar operações da conta
+- Exibição do histórico da conta IQ Option na sessão após login/sincronização
 - Gráfico detalhado de desempenho por hora/dia/semana/mês/ano
 - Botão para ocultar/exibir valores sensíveis (máscara `***`)
 

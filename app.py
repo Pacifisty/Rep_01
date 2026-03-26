@@ -393,6 +393,8 @@ def main() -> None:
     operations = load_operations()
     if "hide_values" not in st.session_state:
         st.session_state.hide_values = False
+    if "iq_account_history" not in st.session_state:
+        st.session_state.iq_account_history = []
 
     total_gain = float(operations.loc[operations["amount"] > 0, "amount"].sum()) if not operations.empty else 0.0
     total_loss = float(abs(operations.loc[operations["amount"] < 0, "amount"].sum())) if not operations.empty else 0.0
@@ -479,6 +481,7 @@ def main() -> None:
                 with st.spinner("Sincronizando operações da IQ Option..."):
                     try:
                         iq_ops = fetch_iqoption_operations(iq_email, iq_password, limit=int(iq_limit), balance_mode=iq_balance_mode)
+                        st.session_state.iq_account_history = iq_ops
                         st.write("Total retornado pela API:", len(iq_ops))
                         st.write(iq_ops[:5] if iq_ops else "Nenhuma operação extraída")
                         inserted = 0
@@ -559,6 +562,22 @@ def main() -> None:
             st.rerun()
 
     st.subheader("Histórico de operações")
+    if st.session_state.iq_account_history:
+        st.markdown("#### Histórico da conta IQ Option (sessão logada)")
+        iq_history_df = pd.DataFrame(st.session_state.iq_account_history).copy()
+        if not iq_history_df.empty:
+            if "op_datetime" in iq_history_df.columns:
+                iq_history_df["Data/Hora"] = pd.to_datetime(iq_history_df["op_datetime"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+            else:
+                iq_history_df["Data/Hora"] = pd.to_datetime(iq_history_df["op_date"], errors="coerce").dt.strftime("%d/%m/%Y")
+            iq_history_df["Valor"] = iq_history_df["amount"].apply(format_currency)
+            iq_history_df = iq_history_df.rename(columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo"})
+            st.dataframe(
+                iq_history_df[[c for c in ["Data/Hora", "Descrição", "Origem", "ID Externo", "Valor"] if c in iq_history_df.columns]],
+                use_container_width=True,
+                hide_index=True,
+            )
+
     if operations.empty:
         st.info("Nenhuma operação registrada ainda.")
     else:
