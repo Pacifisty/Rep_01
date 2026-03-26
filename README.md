@@ -12,8 +12,10 @@ Sistema web local para controle de banca, com registro de ganhos/perdas diárias
 - Lucro do dia em % com indicador visual (verde positivo / vermelho negativo) e valor financeiro do dia
 - Painel visual de saldo disponível do dia com mudança de cor:
   - saldo disponível (dia) = base inicial do dia ± lucro/prejuízo do dia
-  - preto/cinza quando atinge stop loss diário
-  - dourado com glow quando atinge meta diária
+  - verde/glow quando o dia está positivo
+  - vermelho/glow quando o dia está negativo
+  - dourado/glow quando atinge meta diária
+  - vermelho/preto quando atinge stop loss diário
 - Registro diário de lucros e perdas
 - Saldo atualizado da banca
 - Histórico completo de entradas
@@ -21,6 +23,7 @@ Sistema web local para controle de banca, com registro de ganhos/perdas diárias
 - Total ganho do dia e prejuízo do dia
 - % de lucro do dia (positivo ou negativo)
 - % de lucro da semana, mês e ano
+- Painéis de % lucro (dia/semana/mês/ano) com verde/glow para positivo e vermelho/glow para negativo
 - Limite de perda diária (stop loss) em %
 - Meta de lucro diária em %
 - Alertas ao atingir stop loss ou meta

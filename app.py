@@ -249,20 +249,26 @@ def render_daily_available_panel(
     stop_loss_hit: bool,
     goal_hit: bool,
 ) -> None:
-    panel_bg = "linear-gradient(135deg, #0f172a, #1e293b)"
-    panel_border = "#334155"
-    glow = "none"
-    status = "Em andamento"
+    panel_bg = "linear-gradient(135deg, #14532d, #166534)"
+    panel_border = "#22c55e"
+    glow = "0 0 18px rgba(34, 197, 94, 0.60)"
+    status = "Positivo"
 
     if stop_loss_hit:
-        panel_bg = "linear-gradient(135deg, #111111, #3f3f46)"
-        panel_border = "#71717a"
+        panel_bg = "linear-gradient(135deg, #2b0a0a, #111111)"
+        panel_border = "#7f1d1d"
+        glow = "0 0 18px rgba(127, 29, 29, 0.80)"
         status = "STOP LOSS ATINGIDO"
     elif goal_hit:
         panel_bg = "linear-gradient(135deg, #7a5d00, #d4af37)"
         panel_border = "#facc15"
-        glow = "0 0 20px rgba(250, 204, 21, 0.75)"
+        glow = "0 0 20px rgba(250, 204, 21, 0.80)"
         status = "META DIÁRIA ATINGIDA"
+    elif day_result < 0:
+        panel_bg = "linear-gradient(135deg, #7f1d1d, #991b1b)"
+        panel_border = "#ef4444"
+        glow = "0 0 18px rgba(239, 68, 68, 0.65)"
+        status = "Negativo"
 
     indicator_color = "#22c55e" if daily_pct >= 0 else "#ef4444"
     pct_signal = "+" if daily_pct >= 0 else ""
@@ -286,6 +292,34 @@ def render_daily_available_panel(
                 % do dia: <b style="color: {indicator_color};">{pct_signal}{daily_pct:.2f}%</b>
             </div>
             <div style="margin-top: 8px; font-size: 0.9rem; opacity: 0.95;">Status: <b>{status}</b></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_percentage_panel(title: str, pct_value: float, result_value: float, hide_values: bool) -> None:
+    positive = pct_value >= 0
+    bg = "linear-gradient(135deg, #14532d, #166534)" if positive else "linear-gradient(135deg, #7f1d1d, #991b1b)"
+    border = "#22c55e" if positive else "#ef4444"
+    glow = "0 0 16px rgba(34, 197, 94, 0.60)" if positive else "0 0 16px rgba(239, 68, 68, 0.60)"
+    pct_text = "***" if hide_values else f"{pct_value:+.2f}%"
+    result_text = "***" if hide_values else signed_currency(result_value)
+
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid {border};
+            border-radius: 14px;
+            padding: 12px;
+            background: {bg};
+            box-shadow: {glow};
+            color: #f8fafc;
+            min-height: 110px;
+        ">
+            <div style="font-size: 0.9rem; opacity: 0.9;">{title}</div>
+            <div style="font-size: 1.5rem; font-weight: 700; margin-top: 4px;">{pct_text}</div>
+            <div style="font-size: 0.95rem; margin-top: 6px;">Resultado: <b>{result_text}</b></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -463,12 +497,8 @@ def main() -> None:
         "Disponível/dia (base inicial no início do dia)",
         maybe_mask_currency(daily_available_initial_adjusted, hide_values),
     )
-    col3.metric(
-        "Lucro do dia (%)",
-        "***" if hide_values else f"{daily_profit_pct:+.2f}%",
-        delta="***" if hide_values else signed_currency(daily_result_today),
-        delta_color="normal",
-    )
+    with col3:
+        render_percentage_panel("Lucro do dia (%)", daily_profit_pct, daily_result_today, hide_values)
     col4.metric("Saldo líquido total", maybe_mask_currency(net_balance, hide_values))
 
     if hide_values:
@@ -489,24 +519,12 @@ def main() -> None:
     dcol4.metric("Total perdido (acumulado)", maybe_mask_currency(total_loss, hide_values))
 
     pcol1, pcol2, pcol3 = st.columns(3)
-    pcol1.metric(
-        "% lucro da semana",
-        "***" if hide_values else f"{week_profit_pct:+.2f}%",
-        delta="***" if hide_values else signed_currency(week_result),
-        delta_color="normal",
-    )
-    pcol2.metric(
-        "% lucro do mês",
-        "***" if hide_values else f"{month_profit_pct:+.2f}%",
-        delta="***" if hide_values else signed_currency(month_result),
-        delta_color="normal",
-    )
-    pcol3.metric(
-        "% lucro do ano",
-        "***" if hide_values else f"{year_profit_pct:+.2f}%",
-        delta="***" if hide_values else signed_currency(year_result),
-        delta_color="normal",
-    )
+    with pcol1:
+        render_percentage_panel("% lucro da semana", week_profit_pct, week_result, hide_values)
+    with pcol2:
+        render_percentage_panel("% lucro do mês", month_profit_pct, month_result, hide_values)
+    with pcol3:
+        render_percentage_panel("% lucro do ano", year_profit_pct, year_result, hide_values)
 
     st.subheader("Registrar operação")
     with st.form("add_operation_form"):
