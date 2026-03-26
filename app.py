@@ -667,7 +667,7 @@ def main() -> None:
         iq_email = st.text_input("Email IQ Option", key="iq_email")
         iq_password = st.text_input("Senha IQ Option", type="password", key="iq_password")
         iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=500, step=10)
-        if st.button("Sincronizar operações da IQ Option", use_container_width=True):
+        if st.button("Sincronizar operações da IQ Option", width="stretch"):
             if not iq_email or not iq_password:
                 st.session_state.iq_connected = False
                 st.error("Preencha email e senha da IQ Option para sincronizar.")
@@ -797,7 +797,7 @@ def main() -> None:
                 real_df = real_df.rename(
                     columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo", "symbol": "Ativo", "operation_type": "Tipo"}
                 )
-                st.dataframe(real_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in real_df.columns]], use_container_width=True, hide_index=True)
+                st.dataframe(real_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in real_df.columns]], width="stretch", hide_index=True)
 
         with tab_practice:
             practice_df = pd.DataFrame(st.session_state.iq_account_history_practice).copy()
@@ -809,7 +809,7 @@ def main() -> None:
                 practice_df = practice_df.rename(
                     columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo", "symbol": "Ativo", "operation_type": "Tipo"}
                 )
-                st.dataframe(practice_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in practice_df.columns]], use_container_width=True, hide_index=True)
+                st.dataframe(practice_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in practice_df.columns]], width="stretch", hide_index=True)
 
     if operations.empty:
         st.info("Nenhuma operação registrada ainda.")
@@ -821,7 +821,7 @@ def main() -> None:
         display_df = display_df.rename(
             columns={"id": "ID", "description": "Descrição", "source": "Origem", "account_type": "Conta", "symbol": "Ativo", "operation_type": "Tipo", "external_id": "ID Externo"}
         )
-        st.dataframe(display_df[[c for c in ["ID", "Data/Hora", "Descrição", "Conta", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in display_df.columns]], use_container_width=True, hide_index=True)
+        st.dataframe(display_df[[c for c in ["ID", "Data/Hora", "Descrição", "Conta", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in display_df.columns]], width="stretch", hide_index=True)
 
         remove_col1, remove_col2 = st.columns([2, 1])
         op_to_remove = remove_col1.selectbox(
@@ -837,7 +837,7 @@ def main() -> None:
         st.subheader("📈 Desempenho detalhado das operações")
         timeframe = st.selectbox("Visualizar por", ["Hora", "Dia", "Semana", "Mês", "Ano"], index=1)
         fig, grouped = build_detailed_chart(operations, float(settings["initial_bankroll"]), timeframe)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.dataframe(
             grouped.rename(
                 columns={
@@ -847,7 +847,7 @@ def main() -> None:
                     "resultado": "Resultado",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
