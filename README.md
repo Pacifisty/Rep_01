@@ -34,7 +34,8 @@ Sistema web local para controle de banca, com registro de ganhos/perdas diárias
 - Campo de data e descrição da operação
 - Gráfico simples de evolução da banca
 - Integração com API não oficial da IQ Option para importar operações da conta
-- Exibição do histórico da conta IQ Option na sessão após login/sincronização
+- Login/Logout da IQ Option (em vez de botão de sincronização manual)
+- Exibição do histórico da conta IQ Option em abas no mesmo painel (REAL e PRACTICE)
 - Badge de status IQ Option no topo: 🟢 online / 🔴 offline
 - Gráfico detalhado de desempenho por hora/dia/semana/mês/ano
 - Botão para ocultar/exibir valores sensíveis (máscara `***`)
@@ -82,9 +83,9 @@ Todos os dados ficam salvos localmente no arquivo `banca.db`, criado automaticam
 ## Sincronização com IQ Option
 
 1. Na barra lateral, preencha **Email IQ Option**, **Senha IQ Option** e o limite de operações para busca.
-2. Escolha o tipo de conta em **Conta para sincronização** (`REAL` ou `PRACTICE`).
-3. Clique em **Sincronizar operações da IQ Option**.
-4. O sistema importa operações fechadas disponíveis e adiciona no histórico com origem `iqoption`.
+2. Clique em **Login IQ Option**.
+3. O sistema busca e exibe o histórico das contas **REAL** e **PRACTICE** em abas no mesmo painel.
+4. Clique em **Logout IQ Option** para encerrar a sessão.
 5. Operações já importadas não são duplicadas (controle por `source + external_id`).
 
 > Observação: esta integração usa a API não oficial do projeto no GitHub informado e depende dos métodos disponibilizados pela biblioteca instalada.

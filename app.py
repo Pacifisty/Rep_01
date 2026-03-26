@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import date, datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,10 @@ def init_db() -> None:
                 amount REAL NOT NULL,
                 source TEXT NOT NULL DEFAULT 'manual',
                 external_id TEXT,
+                account_type TEXT NOT NULL DEFAULT 'MANUAL',
+                symbol TEXT,
+                operation_type TEXT,
+                api_output TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -54,6 +59,10 @@ def init_db() -> None:
         _ensure_column(conn, "operations", "op_datetime", "op_datetime TEXT")
         _ensure_column(conn, "operations", "source", "source TEXT NOT NULL DEFAULT 'manual'")
         _ensure_column(conn, "operations", "external_id", "external_id TEXT")
+        _ensure_column(conn, "operations", "account_type", "account_type TEXT NOT NULL DEFAULT 'MANUAL'")
+        _ensure_column(conn, "operations", "symbol", "symbol TEXT")
+        _ensure_column(conn, "operations", "operation_type", "operation_type TEXT")
+        _ensure_column(conn, "operations", "api_output", "api_output TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_source_external_id ON operations(source, external_id)")
         conn.execute(
             """
@@ -88,13 +97,18 @@ def add_operation(
     source: str = "manual",
     external_id: str | None = None,
     op_datetime: datetime | None = None,
+    account_type: str = "MANUAL",
+    symbol: str | None = None,
+    operation_type: str | None = None,
+    api_output: str | None = None,
 ) -> bool:
     with get_connection() as conn:
         before = conn.total_changes
         conn.execute(
             """
-            INSERT OR IGNORE INTO operations (op_date, op_datetime, description, amount, source, external_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO operations
+            (op_date, op_datetime, description, amount, source, external_id, account_type, symbol, operation_type, api_output)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 op_date.isoformat(),
@@ -103,6 +117,10 @@ def add_operation(
                 amount,
                 source,
                 external_id,
+                account_type,
+                symbol,
+                operation_type,
+                api_output,
             ),
         )
         return conn.total_changes > before
@@ -116,17 +134,17 @@ def remove_operation(op_id: int) -> None:
 def load_operations() -> pd.DataFrame:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, op_date, op_datetime, description, amount, source, external_id, created_at FROM operations ORDER BY op_date, id"
+            "SELECT id, op_date, op_datetime, description, amount, source, external_id, account_type, symbol, operation_type, api_output, created_at FROM operations ORDER BY op_date, id"
         ).fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["id", "op_date", "op_datetime", "description", "amount", "source", "external_id", "created_at"])
+        return pd.DataFrame(columns=["id", "op_date", "op_datetime", "description", "amount", "source", "external_id", "account_type", "symbol", "operation_type", "api_output", "created_at"])
 
     return pd.DataFrame([dict(r) for r in rows])
 
 
 # ---------- IQ Option Sync ----------
-def _extract_operations_from_payload(payload: Any, default_source: str = "iqoption") -> list[dict[str, Any]]:
+def _extract_operations_from_payload(payload: Any, default_source: str = "iqoption", account_type: str = "REAL") -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     def walk(node: Any) -> None:
@@ -173,6 +191,10 @@ def _extract_operations_from_payload(payload: Any, default_source: str = "iqopti
                     "amount": profit,
                     "source": default_source,
                     "external_id": external_id,
+                    "account_type": account_type,
+                    "symbol": str(symbol),
+                    "operation_type": str(operation_type),
+                    "api_output": json.dumps(node, ensure_ascii=False, default=str),
                 }
             )
 
@@ -228,12 +250,23 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100, balan
 
     operations: list[dict[str, Any]] = []
     for payload in payloads:
-        extracted = _extract_operations_from_payload(payload)
+        extracted = _extract_operations_from_payload(
+            payload,
+            default_source=f"iqoption_{balance_mode.lower()}",
+            account_type=balance_mode,
+        )
         print("EXTRAIDAS:", len(extracted))
         operations.extend(extracted)
 
     unique_by_key = {(op["source"], op["external_id"]): op for op in operations}
     return list(unique_by_key.values())
+
+
+def fetch_iqoption_histories(email: str, password: str, limit: int = 500) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "REAL": fetch_iqoption_operations(email, password, limit=limit, balance_mode="REAL"),
+        "PRACTICE": fetch_iqoption_operations(email, password, limit=limit, balance_mode="PRACTICE"),
+    }
 
 
 # ---------- UI ----------
@@ -413,6 +446,10 @@ def main() -> None:
         st.session_state.hide_values = False
     if "iq_account_history" not in st.session_state:
         st.session_state.iq_account_history = []
+    if "iq_account_history_real" not in st.session_state:
+        st.session_state.iq_account_history_real = []
+    if "iq_account_history_practice" not in st.session_state:
+        st.session_state.iq_account_history_practice = []
     if "iq_connected" not in st.session_state:
         st.session_state.iq_connected = False
 
@@ -499,22 +536,27 @@ def main() -> None:
         st.subheader("🔌 IQ Option")
         iq_email = st.text_input("Email IQ Option", key="iq_email")
         iq_password = st.text_input("Senha IQ Option", type="password", key="iq_password")
-        iq_balance_mode = st.selectbox("Conta para sincronização", options=["REAL", "PRACTICE"], index=0)
         iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=500, step=10)
-        if st.button("Sincronizar operações da IQ Option", use_container_width=True):
+        login_col, logout_col = st.columns(2)
+        if login_col.button("Login IQ Option", use_container_width=True):
             if not iq_email or not iq_password:
                 st.session_state.iq_connected = False
-                st.error("Preencha email e senha da IQ Option para sincronizar.")
+                st.error("Preencha email e senha da IQ Option para login.")
             else:
-                with st.spinner("Sincronizando operações da IQ Option..."):
+                with st.spinner("Autenticando e carregando histórico REAL/PRACTICE..."):
                     try:
-                        iq_ops = fetch_iqoption_operations(iq_email, iq_password, limit=int(iq_limit), balance_mode=iq_balance_mode)
+                        histories = fetch_iqoption_histories(iq_email, iq_password, limit=int(iq_limit))
+                        iq_real = histories.get("REAL", [])
+                        iq_practice = histories.get("PRACTICE", [])
                         st.session_state.iq_connected = True
-                        st.session_state.iq_account_history = iq_ops
-                        st.write("Total retornado pela API:", len(iq_ops))
-                        st.write(iq_ops[:5] if iq_ops else "Nenhuma operação extraída")
+                        st.session_state.iq_account_history_real = iq_real
+                        st.session_state.iq_account_history_practice = iq_practice
+                        st.session_state.iq_account_history = iq_real + iq_practice
+                        st.write("Total REAL retornado pela API:", len(iq_real))
+                        st.write("Total PRACTICE retornado pela API:", len(iq_practice))
+                        st.write((iq_real[:3] + iq_practice[:2]) if (iq_real or iq_practice) else "Nenhuma operação extraída")
                         inserted = 0
-                        for op in iq_ops:
+                        for op in (iq_real + iq_practice):
                             did_insert = add_operation(
                                 op["op_date"],
                                 op["description"],
@@ -522,14 +564,25 @@ def main() -> None:
                                 op["source"],
                                 op["external_id"],
                                 op.get("op_datetime"),
+                                account_type=op.get("account_type", "MANUAL"),
+                                symbol=op.get("symbol"),
+                                operation_type=op.get("operation_type"),
+                                api_output=op.get("api_output"),
                             )
                             if did_insert:
                                 inserted += 1
-                        st.success(f"Sincronização concluída. {inserted} novas operações importadas.")
+                        st.success(f"Login concluído. {inserted} novas operações importadas da IQ Option.")
                         st.rerun()
                     except Exception as exc:
                         st.session_state.iq_connected = False
-                        st.error(f"Erro na sincronização com IQ Option: {exc}")
+                        st.error(f"Erro no login da IQ Option: {exc}")
+
+        if logout_col.button("Logout IQ Option", use_container_width=True):
+            st.session_state.iq_connected = False
+            st.session_state.iq_account_history = []
+            st.session_state.iq_account_history_real = []
+            st.session_state.iq_account_history_practice = []
+            st.success("Logout realizado com sucesso.")
 
     hide_values = bool(st.session_state.hide_values)
     col1, col2, col3, col4 = st.columns(4)
@@ -592,21 +645,32 @@ def main() -> None:
             st.rerun()
 
     st.subheader("Histórico de operações")
-    if st.session_state.iq_account_history:
-        st.markdown("#### Histórico da conta IQ Option (sessão logada)")
-        iq_history_df = pd.DataFrame(st.session_state.iq_account_history).copy()
-        if not iq_history_df.empty:
-            if "op_datetime" in iq_history_df.columns:
-                iq_history_df["Data/Hora"] = pd.to_datetime(iq_history_df["op_datetime"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+    if st.session_state.iq_connected:
+        st.markdown("#### Histórico IQ Option (REAL / PRACTICE)")
+        tab_real, tab_practice = st.tabs(["Conta REAL", "Conta PRACTICE"])
+        with tab_real:
+            real_df = pd.DataFrame(st.session_state.iq_account_history_real).copy()
+            if real_df.empty:
+                st.info("Sem operações REAL retornadas na sessão atual.")
             else:
-                iq_history_df["Data/Hora"] = pd.to_datetime(iq_history_df["op_date"], errors="coerce").dt.strftime("%d/%m/%Y")
-            iq_history_df["Valor"] = iq_history_df["amount"].apply(format_currency)
-            iq_history_df = iq_history_df.rename(columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo"})
-            st.dataframe(
-                iq_history_df[[c for c in ["Data/Hora", "Descrição", "Origem", "ID Externo", "Valor"] if c in iq_history_df.columns]],
-                use_container_width=True,
-                hide_index=True,
-            )
+                real_df["Data/Hora"] = pd.to_datetime(real_df.get("op_datetime", real_df.get("op_date")), errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+                real_df["Valor"] = real_df["amount"].apply(format_currency)
+                real_df = real_df.rename(
+                    columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo", "symbol": "Ativo", "operation_type": "Tipo"}
+                )
+                st.dataframe(real_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in real_df.columns]], use_container_width=True, hide_index=True)
+
+        with tab_practice:
+            practice_df = pd.DataFrame(st.session_state.iq_account_history_practice).copy()
+            if practice_df.empty:
+                st.info("Sem operações PRACTICE retornadas na sessão atual.")
+            else:
+                practice_df["Data/Hora"] = pd.to_datetime(practice_df.get("op_datetime", practice_df.get("op_date")), errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+                practice_df["Valor"] = practice_df["amount"].apply(format_currency)
+                practice_df = practice_df.rename(
+                    columns={"description": "Descrição", "source": "Origem", "external_id": "ID Externo", "symbol": "Ativo", "operation_type": "Tipo"}
+                )
+                st.dataframe(practice_df[[c for c in ["Data/Hora", "Descrição", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in practice_df.columns]], use_container_width=True, hide_index=True)
 
     if operations.empty:
         st.info("Nenhuma operação registrada ainda.")
@@ -615,8 +679,10 @@ def main() -> None:
         display_df["Data/Hora"] = pd.to_datetime(display_df["op_datetime"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
         display_df["Data/Hora"] = display_df["Data/Hora"].fillna(pd.to_datetime(display_df["op_date"]).dt.strftime("%d/%m/%Y"))
         display_df["Valor"] = display_df["amount"].apply(format_currency)
-        display_df = display_df.rename(columns={"id": "ID", "description": "Descrição", "source": "Origem"})
-        st.dataframe(display_df[["ID", "Data/Hora", "Descrição", "Origem", "Valor"]], use_container_width=True, hide_index=True)
+        display_df = display_df.rename(
+            columns={"id": "ID", "description": "Descrição", "source": "Origem", "account_type": "Conta", "symbol": "Ativo", "operation_type": "Tipo", "external_id": "ID Externo"}
+        )
+        st.dataframe(display_df[[c for c in ["ID", "Data/Hora", "Descrição", "Conta", "Ativo", "Tipo", "Origem", "ID Externo", "Valor"] if c in display_df.columns]], use_container_width=True, hide_index=True)
 
         remove_col1, remove_col2 = st.columns([2, 1])
         op_to_remove = remove_col1.selectbox(
