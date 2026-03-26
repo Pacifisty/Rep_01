@@ -144,8 +144,134 @@ def load_operations() -> pd.DataFrame:
 
 
 # ---------- IQ Option Sync ----------
-def _extract_operations_from_payload(payload: Any, default_source: str = "iqoption", account_type: str = "REAL") -> list[dict[str, Any]]:
+def _extract_operations_from_payload(
+    payload: Any,
+    default_source: str = "iqoption",
+    account_type: str = "REAL",
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+
+    profit_keys = (
+        "close_profit",
+        "profit_amount",
+        "profit",
+        "pnl",
+        "win_amount",
+        "gross_profit",
+        "net_profit",
+        "sell_profit",
+        "commission",
+    )
+
+    timestamp_keys = (
+        "close_time",
+        "close_time_ms",
+        "closeTimestamp",
+        "timestamp",
+        "created",
+        "created_at",
+        "open_time",
+        "expired",
+        "expiration_time",
+        "expiration",
+    )
+
+    symbol_keys = (
+        "active",
+        "instrument",
+        "symbol",
+        "asset",
+        "active_name",
+        "underlying",
+    )
+
+    operation_type_keys = (
+        "type",
+        "instrument_type",
+        "option_type",
+        "kind",
+        "name",
+    )
+
+    id_keys = (
+        "id",
+        "position_id",
+        "order_id",
+        "external_id",
+        "deal_id",
+        "user_balance_id",
+    )
+
+    def normalize_timestamp(value: Any) -> float | None:
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            ts = float(value)
+            if ts > 10_000_000_000:
+                ts = ts / 1000
+            return ts
+
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+
+            if value.isdigit():
+                ts = float(value)
+                if ts > 10_000_000_000:
+                    ts = ts / 1000
+                return ts
+
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+
+        return None
+
+    def normalize_profit(node: dict[str, Any]) -> float | None:
+        for key in profit_keys:
+            value = node.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.replace(",", "."))
+                except ValueError:
+                    pass
+
+        invest = node.get("invest") or node.get("amount")
+        payout = node.get("payout") or node.get("return")
+        if isinstance(invest, (int, float)) and isinstance(payout, (int, float)):
+            return float(payout) - float(invest)
+
+        return None
+
+    def pick_first(node: dict[str, Any], keys: tuple[str, ...], default: str) -> str:
+        for key in keys:
+            value = node.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return default
+
+    def pick_timestamp(node: dict[str, Any]) -> float | None:
+        for key in timestamp_keys:
+            ts = normalize_timestamp(node.get(key))
+            if ts is not None:
+                return ts
+        return None
+
+    def build_external_id(node: dict[str, Any], ts: float, profit: float, symbol: str, operation_type: str) -> str:
+        for key in id_keys:
+            value = node.get(key)
+            if value not in (None, ""):
+                return str(value)
+
+        raw_open = node.get("open_time") or node.get("created") or ""
+        raw_close = node.get("close_time") or node.get("expired") or ""
+        raw_amount = node.get("amount") or node.get("invest") or ""
+        return f"{account_type}|{operation_type}|{symbol}|{ts}|{profit}|{raw_amount}|{raw_open}|{raw_close}"
 
     def walk(node: Any) -> None:
         if isinstance(node, list):
@@ -156,44 +282,26 @@ def _extract_operations_from_payload(payload: Any, default_source: str = "iqopti
         if not isinstance(node, dict):
             return
 
-        profit = None
-        for key in ("close_profit", "profit_amount", "profit", "pnl", "win_amount"):
-            if key in node and isinstance(node[key], (int, float)):
-                profit = float(node[key])
-                break
-
-        timestamp = None
-        for key in ("close_time", "close_time_ms", "closeTimestamp", "timestamp", "created", "created_at"):
-            if key in node:
-                value = node[key]
-                if isinstance(value, (int, float)):
-                    timestamp = float(value)
-                elif isinstance(value, str):
-                    try:
-                        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-                    except ValueError:
-                        timestamp = None
-                break
+        profit = normalize_profit(node)
+        timestamp = pick_timestamp(node)
 
         if profit is not None and timestamp is not None:
-            if timestamp > 10_000_000_000:
-                timestamp = timestamp / 1000
-            op_date = datetime.utcfromtimestamp(timestamp).date()
-            external_id = str(node.get("id") or node.get("position_id") or node.get("order_id") or f"{int(timestamp)}_{profit}")
-            symbol = node.get("active") or node.get("instrument") or node.get("symbol") or "ATIVO"
-            operation_type = node.get("type") or node.get("instrument_type") or "trade"
-            desc = f"IQ Option | {operation_type} | {symbol}"
+            dt = datetime.utcfromtimestamp(timestamp)
+            symbol = pick_first(node, symbol_keys, "ATIVO")
+            operation_type = pick_first(node, operation_type_keys, "trade")
+            external_id = build_external_id(node, timestamp, profit, symbol, operation_type)
+
             items.append(
                 {
-                    "op_date": op_date,
-                    "op_datetime": datetime.utcfromtimestamp(timestamp),
-                    "description": desc,
-                    "amount": profit,
+                    "op_date": dt.date(),
+                    "op_datetime": dt,
+                    "description": f"IQ Option | {operation_type} | {symbol}",
+                    "amount": float(profit),
                     "source": default_source,
                     "external_id": external_id,
                     "account_type": account_type,
-                    "symbol": str(symbol),
-                    "operation_type": str(operation_type),
+                    "symbol": symbol,
+                    "operation_type": operation_type,
                     "api_output": json.dumps(node, ensure_ascii=False, default=str),
                 }
             )
@@ -202,25 +310,39 @@ def _extract_operations_from_payload(payload: Any, default_source: str = "iqopti
             walk(value)
 
     walk(payload)
+
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for item in items:
         unique[(item["source"], item["external_id"])] = item
+
     return list(unique.values())
 
 
-def fetch_iqoption_operations(email: str, password: str, limit: int = 100, balance_mode: str = "REAL") -> list[dict[str, Any]]:
+def fetch_iqoption_operations(
+    email: str,
+    password: str,
+    limit: int = 300,
+    balance_mode: str = "REAL",
+) -> list[dict[str, Any]]:
     try:
         from iqoptionapi.stable_api import IQ_Option
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError("Biblioteca iqoptionapi não instalada. Rode: pip install -r requirements.txt") from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "Biblioteca iqoptionapi não instalada. Rode: pip install -r requirements.txt"
+        ) from exc
 
     api = IQ_Option(email, password)
     connected, reason = api.connect()
     if not connected:
         raise RuntimeError(f"Falha ao conectar na IQ Option: {reason}")
-    api.change_balance(balance_mode)  # "REAL" ou "PRACTICE"
+
+    try:
+        api.change_balance(balance_mode)
+    except Exception as exc:
+        raise RuntimeError(f"Não foi possível alternar para a conta {balance_mode}: {exc}") from exc
 
     payloads: list[Any] = []
+    debug_logs: list[str] = []
 
     methods_to_try = [
         ("get_position_history_v2", ("binary-option", limit, 0)),
@@ -233,17 +355,20 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100, balan
 
     for method_name, args in methods_to_try:
         method = getattr(api, method_name, None)
-        if callable(method):
-            try:
-                result = method(*args)
-                print("METODO:", method_name)
-                print("TIPO:", type(result))
-                print("RESULTADO:", result)
-                if result:
-                    payloads.append(result)
-            except Exception as e:
-                print("ERRO NO MÉTODO", method_name, e)
-                continue
+        if not callable(method):
+            debug_logs.append(f"{method_name}: método indisponível")
+            continue
+
+        try:
+            result = method(*args)
+            if result:
+                payloads.append(result)
+                preview = str(result)
+                debug_logs.append(f"{method_name}: retorno OK | tamanho aprox. {len(preview)}")
+            else:
+                debug_logs.append(f"{method_name}: retorno vazio")
+        except Exception as e:
+            debug_logs.append(f"{method_name}: erro -> {e}")
 
     if hasattr(api, "close_connect"):
         api.close_connect()
@@ -255,18 +380,23 @@ def fetch_iqoption_operations(email: str, password: str, limit: int = 100, balan
             default_source=f"iqoption_{balance_mode.lower()}",
             account_type=balance_mode,
         )
-        print("EXTRAIDAS:", len(extracted))
         operations.extend(extracted)
 
     unique_by_key = {(op["source"], op["external_id"]): op for op in operations}
+
+    st.session_state[f"iq_debug_{balance_mode.lower()}"] = debug_logs
+    st.session_state[f"iq_raw_count_{balance_mode.lower()}"] = len(payloads)
+    st.session_state[f"iq_extracted_count_{balance_mode.lower()}"] = len(unique_by_key)
+
     return list(unique_by_key.values())
 
 
 def fetch_iqoption_histories(email: str, password: str, limit: int = 500) -> dict[str, list[dict[str, Any]]]:
-    return {
+    histories = {
         "REAL": fetch_iqoption_operations(email, password, limit=limit, balance_mode="REAL"),
         "PRACTICE": fetch_iqoption_operations(email, password, limit=limit, balance_mode="PRACTICE"),
     }
+    return histories
 
 
 # ---------- UI ----------
@@ -537,26 +667,25 @@ def main() -> None:
         iq_email = st.text_input("Email IQ Option", key="iq_email")
         iq_password = st.text_input("Senha IQ Option", type="password", key="iq_password")
         iq_limit = st.number_input("Máx. operações para buscar", min_value=10, max_value=500, value=500, step=10)
-        login_col, logout_col = st.columns(2)
-        if login_col.button("Login IQ Option", use_container_width=True):
+        if st.button("Sincronizar operações da IQ Option", use_container_width=True):
             if not iq_email or not iq_password:
                 st.session_state.iq_connected = False
-                st.error("Preencha email e senha da IQ Option para login.")
+                st.error("Preencha email e senha da IQ Option para sincronizar.")
             else:
-                with st.spinner("Autenticando e carregando histórico REAL/PRACTICE..."):
+                with st.spinner("Sincronizando operações da IQ Option..."):
                     try:
                         histories = fetch_iqoption_histories(iq_email, iq_password, limit=int(iq_limit))
-                        iq_real = histories.get("REAL", [])
-                        iq_practice = histories.get("PRACTICE", [])
-                        st.session_state.iq_connected = True
-                        st.session_state.iq_account_history_real = iq_real
-                        st.session_state.iq_account_history_practice = iq_practice
-                        st.session_state.iq_account_history = iq_real + iq_practice
-                        st.write("Total REAL retornado pela API:", len(iq_real))
-                        st.write("Total PRACTICE retornado pela API:", len(iq_practice))
-                        st.write((iq_real[:3] + iq_practice[:2]) if (iq_real or iq_practice) else "Nenhuma operação extraída")
                         inserted = 0
-                        for op in (iq_real + iq_practice):
+
+                        imported_real = histories.get("REAL", [])
+                        imported_practice = histories.get("PRACTICE", [])
+
+                        st.session_state.iq_account_history_real = imported_real
+                        st.session_state.iq_account_history_practice = imported_practice
+                        st.session_state.iq_account_history = imported_real + imported_practice
+                        st.session_state.iq_connected = True
+
+                        for op in st.session_state.iq_account_history:
                             did_insert = add_operation(
                                 op["op_date"],
                                 op["description"],
@@ -564,25 +693,35 @@ def main() -> None:
                                 op["source"],
                                 op["external_id"],
                                 op.get("op_datetime"),
-                                account_type=op.get("account_type", "MANUAL"),
-                                symbol=op.get("symbol"),
-                                operation_type=op.get("operation_type"),
-                                api_output=op.get("api_output"),
+                                op.get("account_type", "MANUAL"),
+                                op.get("symbol"),
+                                op.get("operation_type"),
+                                op.get("api_output"),
                             )
                             if did_insert:
                                 inserted += 1
-                        st.success(f"Login concluído. {inserted} novas operações importadas da IQ Option.")
+
+                        st.success(
+                            f"Sincronização concluída. "
+                            f"REAL: {len(imported_real)} | PRACTICE: {len(imported_practice)} | "
+                            f"Novas inseridas: {inserted}"
+                        )
                         st.rerun()
                     except Exception as exc:
                         st.session_state.iq_connected = False
-                        st.error(f"Erro no login da IQ Option: {exc}")
+                        st.error(f"Erro na sincronização com IQ Option: {exc}")
 
-        if logout_col.button("Logout IQ Option", use_container_width=True):
-            st.session_state.iq_connected = False
-            st.session_state.iq_account_history = []
-            st.session_state.iq_account_history_real = []
-            st.session_state.iq_account_history_practice = []
-            st.success("Logout realizado com sucesso.")
+        with st.expander("Depuração IQ Option"):
+            st.write("REAL - payloads brutos:", st.session_state.get("iq_raw_count_real", 0))
+            st.write("REAL - operações extraídas:", st.session_state.get("iq_extracted_count_real", 0))
+            st.write("PRACTICE - payloads brutos:", st.session_state.get("iq_raw_count_practice", 0))
+            st.write("PRACTICE - operações extraídas:", st.session_state.get("iq_extracted_count_practice", 0))
+
+            st.write("Logs REAL:")
+            st.code("\n".join(st.session_state.get("iq_debug_real", [])) or "Sem logs")
+
+            st.write("Logs PRACTICE:")
+            st.code("\n".join(st.session_state.get("iq_debug_practice", [])) or "Sem logs")
 
     hide_values = bool(st.session_state.hide_values)
     col1, col2, col3, col4 = st.columns(4)
